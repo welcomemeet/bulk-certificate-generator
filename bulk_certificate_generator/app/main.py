@@ -128,37 +128,28 @@ def create_job(
     "/api/v1/jobs/{job_id}",
     response_model=JobStatusResponse,
 )
-def get_job_status(
-    job_id: int,
-    db: Session = Depends(get_db),
-):
-    job = (
-        db.query(GenerationJob)
-        .filter(GenerationJob.id == job_id)
-        .first()
-    )
-
+def get_job_status(job_id: int, db: Session = Depends(get_db)):
+    job = db.query(GenerationJob).filter(GenerationJob.id == job_id).first()
     if not job:
-        raise HTTPException(
-            status_code=404,
-            detail="Job not found",
-        )
+        raise HTTPException(status_code=404, detail="Job not found")
 
-    certificates = (
-        db.query(Certificate)
-        .filter(Certificate.job_id == job_id)
-        .all()
-    )
+    certificates = db.query(Certificate).filter(Certificate.job_id == job_id).all()
+    processed = job.success_count + job.failure_count
+    progress_percent = round((processed / job.total_count) * 100, 2) if job.total_count else 0
 
     return {
         "job_id": job.id,
-        "status": job.status,
+        "event_name": job.event_name,
+        "issuer_name": job.issuer_name,
+        "status": job.status.value if hasattr(job.status, "value") else job.status,
         "total_count": job.total_count,
-        "completed": job.success_count,
-        "failed": job.failure_count,
+        "success_count": job.success_count,
+        "failure_count": job.failure_count,
+        "progress_percent": progress_percent,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
         "certificates": certificates,
     }
-
 
 # ============================================================
 # Download certificate
@@ -188,6 +179,7 @@ def download_certificate(
         media_type="application/pdf",
         filename=f"{certificate.recipient_name}.pdf",
     )
+
 
 
 
