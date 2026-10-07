@@ -1,5 +1,4 @@
-
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -14,17 +13,11 @@ from .schemas import (
 from .services import process_job
 
 
-# ---------------------------------------------------------
-# CREATE DATABASE TABLES
-# ---------------------------------------------------------
-
+# Create database tables
 Base.metadata.create_all(bind=engine)
 
 
-# ---------------------------------------------------------
-# CREATE FASTAPI APPLICATION
-# ---------------------------------------------------------
-
+# Create FastAPI application
 app = FastAPI(
     title="Bulk Certificate Generator",
     version="1.0.0",
@@ -35,14 +28,16 @@ app = FastAPI(
 )
 
 
-# ---------------------------------------------------------
-# CORS CONFIGURATION
-# ---------------------------------------------------------
+# ============================================================
+# CORS
+# ============================================================
+
+ALLOWED_ORIGIN = "https://bulk-certificate-generator-gold.vercel.app"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://bulk-certificate-generator-gold.vercel.app",
+        ALLOWED_ORIGIN,
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
@@ -52,9 +47,27 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------
-# ROOT ENDPOINT
-# ---------------------------------------------------------
+# ============================================================
+# Explicit CORS preflight handler
+# ============================================================
+
+@app.options("/api/v1/jobs")
+def options_jobs():
+    return Response(
+        content="OK",
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "600",
+        },
+    )
+
+
+# ============================================================
+# Root
+# ============================================================
 
 @app.get("/")
 def root():
@@ -65,83 +78,58 @@ def root():
     }
 
 
-# ---------------------------------------------------------
-# HEALTH CHECK
-# ---------------------------------------------------------
+# ============================================================
+# Health
+# ============================================================
 
 @app.get("/health")
 def health():
-    return {
-        "status": "ok"
-    }
+    return {"status": "ok"}
 
 
-# ---------------------------------------------------------
-# CREATE BULK CERTIFICATE GENERATION JOB
-# ---------------------------------------------------------
+# ============================================================
+# Create generation job
+# ============================================================
 
 @app.post(
     "/api/v1/jobs",
-    response_model=JobCreatedResponse,
     status_code=202,
+    response_model=JobCreatedResponse,
 )
-def create_generation_job(
-    payload: GenerationRequest,
+def create_job(
+    request: GenerationRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    """
-    Create a bulk certificate generation job.
-
-    The request contains:
-    - Event name
-    - Issuer name
-    - Multiple recipients
-
-    A job is created immediately and certificate generation
-    is processed in the background.
-    """
-
-    # Create generation job
     job = GenerationJob(
-        event_name=payload.event_name,
-        issuer_name=payload.issuer_name,
-        total_count=len(payload.recipients),
+        event_name=request.event_name,
+        issuer=request.issuer,
+        total_recipients=len(request.recipients),
+        status="queued",
+        completed=0,
+        failed=0,
     )
 
     db.add(job)
-    db.flush()
-
-    # Create certificate records for each recipient
-    for recipient in payload.recipients:
-        certificate = Certificate(
-            job_id=job.id,
-            recipient_name=recipient.name,
-            recipient_email=str(recipient.email),
-            course_name=recipient.course_name,
-        )
-
-        db.add(certificate)
-
     db.commit()
     db.refresh(job)
 
-    # Start certificate generation in the background
     background_tasks.add_task(
         process_job,
         job.id,
+        request.recipients,
     )
 
-    return JobCreatedResponse(
-        job_id=job.id,
-        status=job.status,
-        total_count=job.total_count,
-    )
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "total_recipients": job.total_recipients,
+    }
 
 
-# ---------------------------------------------------------
-# GET JOB STATUS / PROGRESS
-# ---------------------------------------------------------
+# ============================================================
+# Get job status
+# ============================================================
 
 @app.get(
     "/api/v1/jobs/{job_id}",
@@ -151,72 +139,47 @@ def get_job_status(
     job_id: int,
     db: Session = Depends(get_db),
 ):
-    """
-    Return the current status and progress of a generation job.
-    """
-
-    job = db.get(
-        GenerationJob,
-        job_id,
+    job = (
+        db.query(GenerationJob)
+        .filter(GenerationJob.id == job_id)
+        .first()
     )
 
     if not job:
         raise HTTPException(
             status_code=404,
-            detail="Generation job not found",
+            detail="Job not found",
         )
 
-    # Calculate progress
-    if job.total_count > 0:
-        completed_count = (
-            job.success_count
-            + job.failure_count
-        )
-
-        progress = (
-            completed_count
-            / job.total_count
-        ) * 100
-    else:
-        progress = 100
-
-    return JobStatusResponse(
-        job_id=job.id,
-        event_name=job.event_name,
-        issuer_name=job.issuer_name,
-        status=job.status,
-        total_count=job.total_count,
-        success_count=job.success_count,
-        failure_count=job.failure_count,
-        progress_percent=round(
-            progress,
-            2,
-        ),
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-        certificates=job.certificates,
-        error_message=job.error_message,
+    certificates = (
+        db.query(Certificate)
+        .filter(Certificate.job_id == job_id)
+        .all()
     )
 
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "total_recipients": job.total_recipients,
+        "completed": job.completed,
+        "failed": job.failed,
+        "certificates": certificates,
+    }
 
-# ---------------------------------------------------------
-# DOWNLOAD GENERATED CERTIFICATE
-# ---------------------------------------------------------
 
-@app.get(
-    "/api/v1/certificates/{certificate_id}/download"
-)
+# ============================================================
+# Download certificate
+# ============================================================
+
+@app.get("/api/v1/certificates/{certificate_id}/download")
 def download_certificate(
     certificate_id: int,
     db: Session = Depends(get_db),
 ):
-    """
-    Download a successfully generated certificate as a PDF.
-    """
-
-    certificate = db.get(
-        Certificate,
-        certificate_id,
+    certificate = (
+        db.query(Certificate)
+        .filter(Certificate.id == certificate_id)
+        .first()
     )
 
     if not certificate:
@@ -225,31 +188,10 @@ def download_certificate(
             detail="Certificate not found",
         )
 
-    # Certificate must be successfully generated
-    if (
-        certificate.certificate_status.value != "completed"
-        or not certificate.file_path
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="Certificate is not available for download",
-        )
-
-    # Check whether the PDF file exists
-    import os
-
-    if not os.path.isfile(
-        certificate.file_path
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Generated file not found",
-        )
+    file_path = certificate.file_path
 
     return FileResponse(
-        certificate.file_path,
+        path=file_path,
         media_type="application/pdf",
-        filename=os.path.basename(
-            certificate.file_path
-        ),
+        filename=f"{certificate.recipient_name}.pdf",
     )
