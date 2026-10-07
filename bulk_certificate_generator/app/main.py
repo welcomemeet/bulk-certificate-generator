@@ -154,8 +154,8 @@ def get_job_status(
         "job_id": job.id,
         "status": job.status,
         "total_count": job.total_count,
-        "completed": job.completed,
-        "failed": job.failed,
+        "completed": job.success_count,
+        "failed": job.failure_count,
         "certificates": certificates,
     }
 
@@ -188,4 +188,6 @@ def download_certificate(
         media_type="application/pdf",
         filename=f"{certificate.recipient_name}.pdf",
     )
+
+
 
