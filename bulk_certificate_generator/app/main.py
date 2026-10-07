@@ -101,14 +101,7 @@ def create_job(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    job = GenerationJob(
-        event_name=request.event_name,
-        issuer_name=request.issuer_name,
-        total_count=len(request.recipients),
-        status="queued",
-        completed=0,
-        failed=0,
-    )
+    job = GenerationJob(event_name=request.event_name, issuer_name=request.issuer_name, total_count=len(request.recipients), status="pending", success_count=0, failure_count=0)
 
     db.add(job)
     db.commit()
@@ -123,7 +116,7 @@ def create_job(
     return {
         "job_id": job.id,
         "status": job.status,
-        "total_recipients": job.total_recipients,
+        "total_count": job.total_count,
     }
 
 
@@ -160,7 +153,7 @@ def get_job_status(
     return {
         "job_id": job.id,
         "status": job.status,
-        "total_recipients": job.total_recipients,
+        "total_count": job.total_count,
         "completed": job.completed,
         "failed": job.failed,
         "certificates": certificates,
@@ -195,3 +188,4 @@ def download_certificate(
         media_type="application/pdf",
         filename=f"{certificate.recipient_name}.pdf",
     )
+
