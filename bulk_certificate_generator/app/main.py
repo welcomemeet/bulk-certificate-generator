@@ -104,7 +104,7 @@ def create_job(
     job = GenerationJob(
         event_name=request.event_name,
         issuer_name=request.issuer_name,
-        total_recipients=len(request.recipients),
+        total_count=len(request.recipients),
         status="queued",
         completed=0,
         failed=0,
