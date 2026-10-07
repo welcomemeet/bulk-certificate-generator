@@ -1,4 +1,6 @@
+
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -12,25 +14,44 @@ from .schemas import (
 from .services import process_job
 
 
-# ---------------------------------------------------------
 # Create database tables
-# ---------------------------------------------------------
 Base.metadata.create_all(bind=engine)
 
 
-# ---------------------------------------------------------
-# FastAPI Application
-# ---------------------------------------------------------
+# Create FastAPI application
 app = FastAPI(
     title="Bulk Certificate Generator",
     version="1.0.0",
-    description="Backend API for bulk certificate generation.",
+    description=(
+        "Backend API for bulk certificate generation "
+        "with job tracking and PDF certificate downloads."
+    ),
 )
 
 
 # ---------------------------------------------------------
-# Root Endpoint
+# CORS CONFIGURATION
 # ---------------------------------------------------------
+# Allows the React + Vite frontend running on port 5173
+# to communicate with the FastAPI backend running on port 8000.
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://bulk-certificate-generator-gold.vercel.app",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ---------------------------------------------------------
+# ROOT ENDPOINT
+# ---------------------------------------------------------
+
 @app.get("/")
 def root():
     return {
@@ -41,8 +62,9 @@ def root():
 
 
 # ---------------------------------------------------------
-# Health Check
+# HEALTH CHECK
 # ---------------------------------------------------------
+
 @app.get("/health")
 def health():
     return {
@@ -51,8 +73,9 @@ def health():
 
 
 # ---------------------------------------------------------
-# Create Certificate Generation Job
+# CREATE BULK CERTIFICATE GENERATION JOB
 # ---------------------------------------------------------
+
 @app.post(
     "/api/v1/jobs",
     response_model=JobCreatedResponse,
@@ -69,9 +92,10 @@ def create_generation_job(
     The request contains:
     - Event name
     - Issuer name
-    - List of recipients
+    - Multiple recipients
 
-    The certificates are generated in the background.
+    A job is created immediately and certificate generation
+    is processed in the background.
     """
 
     # Create generation job
@@ -82,13 +106,10 @@ def create_generation_job(
     )
 
     db.add(job)
-
-    # Flush so that job.id is generated
     db.flush()
 
-    # Create certificate records for every recipient
+    # Create certificate records for each recipient
     for recipient in payload.recipients:
-
         certificate = Certificate(
             job_id=job.id,
             recipient_name=recipient.name,
@@ -98,19 +119,15 @@ def create_generation_job(
 
         db.add(certificate)
 
-    # Save everything to database
     db.commit()
-
-    # Refresh job from database
     db.refresh(job)
 
-    # Start certificate generation in background
+    # Start certificate generation in the background
     background_tasks.add_task(
         process_job,
         job.id,
     )
 
-    # Return job information
     return JobCreatedResponse(
         job_id=job.id,
         status=job.status,
@@ -119,8 +136,9 @@ def create_generation_job(
 
 
 # ---------------------------------------------------------
-# Get Job Status
+# GET JOB STATUS / PROGRESS
 # ---------------------------------------------------------
+
 @app.get(
     "/api/v1/jobs/{job_id}",
     response_model=JobStatusResponse,
@@ -130,16 +148,14 @@ def get_job_status(
     db: Session = Depends(get_db),
 ):
     """
-    Get the current status and progress of a certificate job.
+    Return the current status and progress of a generation job.
     """
 
-    # Find job
     job = db.get(
         GenerationJob,
         job_id,
     )
 
-    # Job doesn't exist
     if not job:
         raise HTTPException(
             status_code=404,
@@ -161,7 +177,6 @@ def get_job_status(
     else:
         progress = 100
 
-    # Return job status
     return JobStatusResponse(
         job_id=job.id,
         event_name=job.event_name,
@@ -182,8 +197,9 @@ def get_job_status(
 
 
 # ---------------------------------------------------------
-# Download Generated Certificate
+# DOWNLOAD GENERATED CERTIFICATE
 # ---------------------------------------------------------
+
 @app.get(
     "/api/v1/certificates/{certificate_id}/download"
 )
@@ -192,23 +208,21 @@ def download_certificate(
     db: Session = Depends(get_db),
 ):
     """
-    Download a generated certificate PDF.
+    Download a successfully generated certificate as a PDF.
     """
 
-    # Find certificate
     certificate = db.get(
         Certificate,
         certificate_id,
     )
 
-    # Certificate doesn't exist
     if not certificate:
         raise HTTPException(
             status_code=404,
             detail="Certificate not found",
         )
 
-    # Certificate is not ready
+    # Certificate must be successfully generated
     if (
         certificate.certificate_status.value
         != "completed"
@@ -219,7 +233,7 @@ def download_certificate(
             detail="Certificate is not available for download",
         )
 
-    # Check file
+    # Check whether the PDF file exists
     import os
 
     if not os.path.isfile(
@@ -230,7 +244,6 @@ def download_certificate(
             detail="Generated file not found",
         )
 
-    # Return PDF file
     return FileResponse(
         certificate.file_path,
         media_type="application/pdf",
