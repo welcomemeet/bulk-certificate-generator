@@ -91,34 +91,20 @@ def health():
 # Create generation job
 # ============================================================
 
-@app.post(
-    "/api/v1/jobs",
-    status_code=202,
-    response_model=JobCreatedResponse,
-)
-def create_job(
-    request: GenerationRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-):
-    job = GenerationJob(event_name=request.event_name, issuer_name=request.issuer_name, total_count=len(request.recipients), status="pending", success_count=0, failure_count=0)
-
+@app.post("/api/v1/jobs", response_model=JobCreatedResponse, status_code=202)
+def create_job(request: GenerationRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    job = GenerationJob(event_name=request.event_name, issuer_name=request.issuer_name, total_count=len(request.recipients), status=JobStatus.PENDING, success_count=0, failure_count=0)
     db.add(job)
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(
-        process_job,
-        job.id,
-        request.recipients,
-    )
+    for recipient in request.recipients:
+        db.add(Certificate(job_id=job.id, recipient_name=recipient.name, recipient_email=recipient.email, course_name=recipient.course_name, certificate_status=CertificateStatus.PENDING))
+    db.commit()
 
-    return {
-        "job_id": job.id,
-        "status": job.status,
-        "total_count": job.total_count,
-    }
+    background_tasks.add_task(process_job, job.id)
 
+    return {"job_id": job.id, "status": job.status, "total_count": job.total_count}
 
 # ============================================================
 # Get job status
@@ -179,6 +165,9 @@ def download_certificate(
         media_type="application/pdf",
         filename=f"{certificate.recipient_name}.pdf",
     )
+
+
+
 
 
 
