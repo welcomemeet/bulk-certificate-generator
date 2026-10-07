@@ -14,11 +14,17 @@ from .schemas import (
 from .services import process_job
 
 
-# Create database tables
+# ---------------------------------------------------------
+# CREATE DATABASE TABLES
+# ---------------------------------------------------------
+
 Base.metadata.create_all(bind=engine)
 
 
-# Create FastAPI application
+# ---------------------------------------------------------
+# CREATE FASTAPI APPLICATION
+# ---------------------------------------------------------
+
 app = FastAPI(
     title="Bulk Certificate Generator",
     version="1.0.0",
@@ -32,8 +38,6 @@ app = FastAPI(
 # ---------------------------------------------------------
 # CORS CONFIGURATION
 # ---------------------------------------------------------
-# Allows the React + Vite frontend running on port 5173
-# to communicate with the FastAPI backend running on port 8000.
 
 app.add_middleware(
     CORSMiddleware,
@@ -224,8 +228,7 @@ def download_certificate(
 
     # Certificate must be successfully generated
     if (
-        certificate.certificate_status.value
-        != "completed"
+        certificate.certificate_status.value != "completed"
         or not certificate.file_path
     ):
         raise HTTPException(
