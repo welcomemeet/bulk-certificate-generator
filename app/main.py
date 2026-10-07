@@ -42,11 +42,11 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://bulk-certificate-generator-gold.vercel.app",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "https://bulk-certificate-generator-gold.vercel.app",
     ],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -177,7 +177,6 @@ def get_job_status(
             completed_count
             / job.total_count
         ) * 100
-
     else:
         progress = 100
 
