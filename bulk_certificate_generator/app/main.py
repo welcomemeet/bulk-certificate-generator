@@ -4,7 +4,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
-from .models import Certificate, GenerationJob
+from .models import Certificate, GenerationJob, JobStatus, CertificateStatus
 from .schemas import (
     GenerationRequest,
     JobCreatedResponse,
@@ -165,6 +165,7 @@ def download_certificate(
         media_type="application/pdf",
         filename=f"{certificate.recipient_name}.pdf",
     )
+
 
 
 
